@@ -1,2 +1,2 @@
 # MidnightMayhem
-Top Down Shooter
+Top Down Shooter game with zombies
