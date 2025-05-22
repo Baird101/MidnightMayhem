@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Responsive Square Canvas Game</title>
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.9.0/lib/p5.min.js"></script>
+    <style>
+      body {
+        margin: 0;
+        overflow: hidden;
+      }
+      canvas {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <script>
+let canvasSize, cnv;
+
+// All positions and sizes are now relative (0..1) and scaled by canvasSize
+let waveChange = false;
+let waveInitialized = false;
+let wave = 1;
+let coins = 0;
+let magSize = 10;
+let currentMag = magSize;
+let totalAmmo = 50;
+let reloadCooldown = 0;
+let drops = [];
+let gameState = "menu";
+let sX = 0.57, sY = 0.51; // as percent of canvasSize
+let playerHealth = 100;
+let bullets = [];
+let enemyBullets = [];
+let playerCooldown = 0;
+let shootingCooldownTime = 10;
+let spawnTimer = 0;
+let espeed = 0.0035; // enemy speed as percent of canvasSize per frame
+let playerLives = 3;
+let enemySpawnCount = 8;
+let spawnE = true;
+let playerStatus = "playing";
+
+
+// Walls as percent of canvasSize
+let houses = [
+    { x: 0,    y: 0,    w: 0.42, h: 0.25 },
+    { x: 0.67, y: 0,    w: 0.267, h: 0.233 },
+    { x: 0,    y: 0.75, w: 0.3, h: 0.25 },
+    { x: 0.625, y: 0.85, w: 0.373, h: 0.15 }
+];
+
+let keys = {
+    left: false,
+    right: false,
+    up: false,
+    down: false
+};
+
+// Spawners as percent of canvasSize
+let spawners = [
+    {x: 0.008, y: 0.5},
+    {x: 0.983, y: 0.5},
+    {x: 0.5, y: 0.008},
+    {x: 0.5, y: 0.983}
+];
+
+let enemies = [];
+const canvasMargin = 0.1; // 3% margin on each side
+
+function setup() {
+  canvasSize = min(windowWidth, windowHeight) * (1 - 2 * canvasMargin);
+  cnv = createCanvas(canvasSize, canvasSize);
+  centerCanvas();
+  sX = 0.57;
+  sY = 0.51;
+}
+
+function windowResized() {
+  canvasSize = min(windowWidth, windowHeight) * (1 - 2 * canvasMargin);
+  resizeCanvas(canvasSize, canvasSize);
+  centerCanvas();
+}
+
+function centerCanvas() {
+  let x = (windowWidth - canvasSize) / 2;
+  let y = (windowHeight - canvasSize) / 2;
+  cnv.position(x, y);
+}
+
+function drawHouses() {
+    fill(51, 51, 51);
+    stroke(89, 89, 89);
+    strokeWeight(2);
+    for (let h of houses) {
+        rect(h.x * canvasSize, h.y * canvasSize, h.w * canvasSize, h.h * canvasSize);
+    }
+}
+
+function isInsideHouse(x, y) {
+    for (let h of houses) {
+        if (x > h.x * canvasSize && x < (h.x + h.w) * canvasSize && y > h.y * canvasSize && y < (h.y + h.h) * canvasSize) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function isLineBlocked(x1, y1, x2, y2) {
+    let midX = (x1 + x2) / 2;
+    let midY = (y1 + y2) / 2;
+    for (let h of houses) {
+        if (midX > h.x * canvasSize && midX < (h.x + h.w) * canvasSize && midY > h.y * canvasSize && midY < (h.y + h.h) * canvasSize) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function checkHouseCollision(b) {
+    for (let house of houses) {
+        if (b.x > house.x * canvasSize && b.x < (house.x + house.w) * canvasSize && b.y > house.y * canvasSize && b.y < (house.y + house.h) * canvasSize) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function keyPressed() {
+    if (keyCode === 82 || keyCode === 17) {
+        let needed = magSize - currentMag;
+        let toLoad = min(needed, totalAmmo);
+        currentMag += toLoad;
+        totalAmmo -= toLoad;
+    }
+    if (keyCode === 32 && waveChange === true) {
+        if (wave === 2) {
+            enemySpawnCount += 10;
+        } 
+        else if (wave === 3) {
+            enemySpawnCount += 12;
+        }
+        if (wave > 4) {
+            gameState = "win";
+        }
+        waveInitialized = false;
+        waveChange = false;
+        wave ++;
+    }
+    if (keyCode === 65 || keyCode === LEFT_ARROW) { keys.left = true; }
+    if (keyCode === 68 || keyCode === RIGHT_ARROW) { keys.right = true; }
+    if (keyCode === 87 || keyCode === UP_ARROW) { keys.up = true; }
+    if (keyCode === 83 || keyCode === DOWN_ARROW) { keys.down = true; }
+}
+
+function keyReleased() {
+    if (keyCode === 65 || keyCode === LEFT_ARROW) { keys.left = false; }
+    if (keyCode === 68 || keyCode === RIGHT_ARROW) { keys.right = false; }
+    if (keyCode === 87 || keyCode === UP_ARROW) { keys.up = false; }
+    if (keyCode === 83 || keyCode === DOWN_ARROW) { keys.down = false; }
+}
+
+function mousePressed() {
+    if (gameState === "menu") {
+        if (mouseX > 0.333 * canvasSize && mouseX < 0.667 * canvasSize && mouseY > 0.417 * canvasSize && mouseY < 0.5 * canvasSize) {
+            gameState = "endless";
+        }
+        if (mouseX > 0.333 * canvasSize && mouseX < 0.667 * canvasSize && mouseY > 0.533 * canvasSize && mouseY < 0.617 * canvasSize) {
+            gameState = "waves";
+        }
+        return;
+    }
+    if(mouseIsPressed && playerCooldown === 0 && currentMag > 0) {
+        let px = sX * canvasSize;
+        let py = sY * canvasSize;
+        let angle = atan2(mouseY - py, mouseX - px);
+        let speed = 0.025 * canvasSize;
+        bullets.push({
+            x: px,
+            y: py,
+            dx: cos(angle) * speed,
+            dy: sin(angle) * speed
+        });
+        playerCooldown = 10;
+        currentMag--;
+    }
+}
+
+function drawDrops() {
+    for (let d of drops) {
+        if (d.type === "ammo") {
+            fill(0, 200, 255);
+            rect(d.x - 0.008 * canvasSize, d.y - 0.008 * canvasSize, 0.016 * canvasSize, 0.016 * canvasSize);
+        } else if (d.type === "coin") {
+            fill(255, 215, 0);
+            ellipse(d.x, d.y, 0.016 * canvasSize, 0.016 * canvasSize);
+        }
+    }
+}
+
+function drawSpawners() {
+    fill(56,56,56);
+    rect(0.008 * canvasSize, 0.5 * canvasSize, 0.008 * canvasSize, 0.042 * canvasSize);
+    rect(0.983 * canvasSize, 0.5 * canvasSize, 0.008 * canvasSize, 0.042 * canvasSize);
+    rect(0.5 * canvasSize, 0.008 * canvasSize, 0.042 * canvasSize, 0.008 * canvasSize);
+    rect(0.5 * canvasSize, 0.983 * canvasSize, 0.042 * canvasSize, 0.008 * canvasSize);
+}
+
+function drawEnemyHealthBars() {
+    for (let e of enemies) {
+        // Make the health bar width and height smaller relative to canvasSize
+        let barWidth = 0.05 * canvasSize;
+        let barHeight = 0.008 * canvasSize;
+        fill(255, 0, 0);
+        rect(e.x - barWidth / 2, e.y - 0.04 * canvasSize, barWidth, barHeight);
+        fill(0, 255, 0);
+        rect(e.x - barWidth / 2, e.y - 0.04 * canvasSize, (e.health / 100) * barWidth, barHeight);
+    }
+}
+
+function drawEnemyBullets() {
+    for (let i = enemyBullets.length - 1; i >= 0; i--) {
+        let b = enemyBullets[i];
+        b.x += b.dx;
+        b.y += b.dy;
+
+        fill(255, 0, 0);
+        ellipse(b.x, b.y, 0.013 * canvasSize, 0.013 * canvasSize);
+
+        if (b.x < 0 || b.x > canvasSize || b.y < 0 || b.y > canvasSize || checkHouseCollision(b)) {
+            enemyBullets.splice(i, 1);
+            continue;
+        }
+
+        let px = sX * canvasSize, py = sY * canvasSize;
+        if (dist(b.x, b.y, px, py) < 0.02 * canvasSize) {
+            playerHealth -= 20;
+            enemyBullets.splice(i, 1);
+        }
+
+        for (let j = 0; j < enemies.length; j++) {
+            let e = enemies[j];
+            if (b.shooterId !== j && dist(b.x, b.y, e.x, e.y) < 0.033 * canvasSize) {
+                e.health -= 10;
+                if (e.health <= 0) {
+                    let rand = random(1);
+                    if (rand < 0.6) {
+                        drops.push({ x: e.x, y: e.y, type: "ammo" });
+                    } else if (rand < 0.75) {
+                        drops.push({ x: e.x, y: e.y, type: "coin" });
+                    }
+                    enemies.splice(j, 1);
+                }
+                enemyBullets.splice(i, 1);
+                break;
+            }
+        }
+    }
+}
+
+function moveAndShootEnemies() {
+    let px = sX * canvasSize, py = sY * canvasSize;
+    for (let i = 0; i < enemies.length; i++) {
+        let e = enemies[i];
+        if (e.vx === undefined) {
+            e.vx = 0;
+            e.vy = 0;
+        }
+        let avoidX = 0;
+        let avoidY = 0;
+        for (let h of houses) {
+            let closestX = constrain(e.x, h.x * canvasSize, (h.x + h.w) * canvasSize);
+            let closestY = constrain(e.y, h.y * canvasSize, (h.y + h.h) * canvasSize);
+            let distToHouse = dist(e.x, e.y, closestX, closestY);
+            if (distToHouse < 0.067 * canvasSize) {
+                let strength = (0.067 * canvasSize - distToHouse) / (0.067 * canvasSize);
+                avoidX += (e.x - closestX) / distToHouse * strength * 1;
+                avoidY += (e.y - closestY) / distToHouse * strength * 1;
+            }
+        }
+        let dx = px - e.x + random(-0.025, 0.025) * canvasSize;
+        let dy = py - e.y + random(-0.025, 0.025) * canvasSize;
+        let mag = sqrt(dx * dx + dy * dy);
+        dx /= mag;
+        dy /= mag;
+        dx += avoidX * 1.2;
+        dy += avoidY * 1.2;
+        mag = sqrt(dx * dx + dy * dy);
+        dx /= mag;
+        dy /= mag;
+        e.vx += (dx * espeed * canvasSize - e.vx) * 0.1;
+        e.vy += (dy * espeed * canvasSize - e.vy) * 0.1;
+        let nextX = e.x + e.vx;
+        let nextY = e.y + e.vy;
+        if (!isInsideHouse(nextX, nextY)) {
+            e.x = nextX;
+            e.y = nextY;
+        }
+        if (e.magazine === undefined) {
+            e.magazine = 3;
+            e.shootingCooldown = 30;
+            e.reloadTime = 90;
+        }
+        e.shootingCooldown--;
+        if (!isLineBlocked(e.x, e.y, px, py) && e.shootingCooldown <= 0) {
+            if (e.magazine > 0) {
+                let angle = atan2(py - e.y, px - e.x);
+                let bulletSpeed = (e.type === "strong") ? 0.008 * canvasSize : 0.013 * canvasSize;
+                let bulletDamage = (e.type === "strong") ? 40 : 20;
+                enemyBullets.push({
+                    x: e.x,
+                    y: e.y,
+                    dx: cos(angle) * bulletSpeed,
+                    dy: sin(angle) * bulletSpeed,
+                    shooterId: i,
+                    damage: bulletDamage
+                });
+                e.magazine--;
+                e.shootingCooldown = (e.type === "strong") ? 40 : 15;
+            } else {
+                e.reloadTime--;
+                if (e.reloadTime <= 0) {
+                    e.magazine = 3;
+                    e.reloadTime = 90;
+                }
+            }
+        }
+        fill(150, 0, 0);
+        ellipse(e.x, e.y, 0.05 * canvasSize, 0.05 * canvasSize);
+    }
+}
+
+function spawnEnemies() {
+    spawnTimer++;
+    let spawner = spawners[floor(random(spawners.length))];
+    let px = sX * canvasSize, py = sY * canvasSize;
+    if (gameState === "waves") {
+        if (enemies.length === 0 && enemySpawnCount <= 0) {
+            waveChange = true;
+        }
+        if (spawnTimer > 100 && enemySpawnCount > 0) {
+            let spawner = spawners[floor(random(spawners.length))];
+            let sx = spawner.x * canvasSize, sy = spawner.y * canvasSize;
+            if (!isInsideHouse(sx, sy) && dist(sx, sy, px, py) > 0.167 * canvasSize) {
+                spawnTimer = 0;
+                enemies.push({
+                    x: sx,
+                    y: sy,
+                    health: 100,
+                    shootingCooldown: 0
+                });
+                enemySpawnCount--;
+            }
+        }
+    }
+    if (spawnTimer > 120 && enemies.length < 20 && gameState === "endless") {
+        let sx = spawner.x * canvasSize, sy = spawner.y * canvasSize;
+        if (!isInsideHouse(sx, sy) && dist(sx, sy, px, py) > 0.167 * canvasSize ) {
+            spawnTimer = 0;
+            enemies.push({
+                x: sx,
+                y: sy,
+                health: 100,
+                shootingCooldown: 0
+            });
+        }
+    }
+}
+
+function drawFlashlight() {
+    if(gameState === "win"){
+        return;
+    }
+    let px = sX * canvasSize, py = sY * canvasSize;
+    let angle = atan2(mouseY - py, mouseX - px);
+    push();
+    translate(px, py);
+    rotate(angle);
+    noFill();
+    strokeWeight(0.043 * canvasSize);
+    stroke(112, 106, 29, 180);
+    ellipse(0.5 * canvasSize, 0, 1.167 * canvasSize, 0.417 * canvasSize);
+    stroke(94, 85, 27, 240);
+    ellipse(0.5 * canvasSize, 0, 1.25 * canvasSize, 0.5 * canvasSize);
+    stroke(60, 61, 28, 250);
+    ellipse(0.5 * canvasSize, 0, 1.333 * canvasSize, 0.583 * canvasSize);
+    stroke(56, 56, 56);
+    strokeWeight(1.042 * canvasSize);
+    ellipse(0.5 * canvasSize, 0, 2.417 * canvasSize, 1.667 * canvasSize);
+    pop();
+}
+
+function drawScope() {
+    if(gameState === "menu"){
+        stroke(255, 245, 255,220);
+    } else{ 
+        stroke(0, 0, 0,220);
+    }
+    strokeWeight(2);
+    ellipse(mouseX - 5, mouseY, 2,2);
+    ellipse(mouseX + 5, mouseY, 2,2);
+    ellipse(mouseX, mouseY - 5, 2,2);
+    ellipse(mouseX, mouseY + 5, 2,2);
+    line(mouseX - 10, mouseY, mouseX + 10, mouseY);
+    line(mouseX, mouseY - 10, mouseX, mouseY + 10);
+}
+
+function drawGuy() {
+    let px = sX * canvasSize, py = sY * canvasSize;
+    if (playerHealth <= 0) {
+        if (gameState === "waves") {
+            playerLives--;
+            if (playerLives < 1) {
+                gameState = "dead";
+            } else {
+                playerHealth = 100;
+            }
+        } else if (gameState === "endless") {
+            gameState = "dead";
+        }
+    }
+    let moveStep = 0.008 * canvasSize;
+    if (keys.right ) { px += moveStep; }
+    if (keys.left )  { px -= moveStep; }
+    if (keys.up )    { py -= moveStep; }
+    if (keys.down )  { py += moveStep; }
+    // Boundaries
+    px = constrain(px, 0.02 * canvasSize, 0.98 * canvasSize);
+    py = constrain(py, 0.02 * canvasSize, 0.98 * canvasSize);
+    sX = px / canvasSize;
+    sY = py / canvasSize;
+    let angle = atan2(mouseY - py, mouseX - px);
+    noStroke();
+    push();
+    translate(px, py);
+    rotate(angle);
+    fill(117, 82, 22);
+    rect(-0.013 * canvasSize, 0.007 * canvasSize, 0.025 * canvasSize, 0.01 * canvasSize);
+    rect(-0.013 * canvasSize, -0.017 * canvasSize, 0.025 * canvasSize, 0.01 * canvasSize);
+    ellipse(0, 0, 0.042 * canvasSize, 0.033 * canvasSize);
+    fill(200, 220, 255);
+    arc(0.008 * canvasSize, -0.005 * canvasSize, 0.02 * canvasSize, 0.013 * canvasSize, -PI/2, PI/2);
+    fill(30);
+    rect(0.017 * canvasSize, -0.005 * canvasSize, 0.033 * canvasSize, 0.01 * canvasSize);
+    fill(80);
+    rect(0.012 * canvasSize, -0.008 * canvasSize, 0.008 * canvasSize, 0.017 * canvasSize);
+    pop();
+}
+
+function drawPlayerHealth() {
+    let px = sX * canvasSize, py = sY * canvasSize;
+    stroke(0);
+    fill(255, 0, 0);
+    rect(px - 0.042 * canvasSize, py - 0.042 * canvasSize, 0.083 * canvasSize, 0.008 * canvasSize);
+    fill(0, 255, 0);
+    rect(px - 0.042 * canvasSize, py - 0.042 * canvasSize, playerHealth * 0.00083 * canvasSize, 0.008 * canvasSize);
+}
+
+function regenerateHealth() {
+    if (playerHealth < 100) {
+        playerHealth += 0.1;
+    }
+}
+
+function drawBullets() {
+    for (let i = bullets.length - 1; i >= 0; i--) {
+        let b = bullets[i];
+        b.x += b.dx;
+        b.y += b.dy;
+        fill(255, 255, 100);
+        ellipse(b.x, b.y, 0.013 * canvasSize, 0.013 * canvasSize);
+        if (b.x < 0 || b.x > canvasSize || b.y < 0 || b.y > canvasSize || checkHouseCollision(b)) {
+            bullets.splice(i, 1);
+            continue;
+        }
+        for (let j = enemies.length - 1; j >= 0; j--) {
+            let e = enemies[j];
+            if (dist(b.x, b.y, e.x, e.y) < 0.033 * canvasSize) {
+                e.health -= 25;
+                if (e.health <= 0) {
+                    let rand = random(1);
+                    if (rand < 0.6) {
+                        drops.push({ x: e.x, y: e.y, type: "ammo" });
+                    } else if (rand < 0.75) {
+                        drops.push({ x: e.x, y: e.y, type: "coin" });
+                    }
+                    enemies.splice(j, 1);
+                }
+                bullets.splice(i, 1);
+                break;
+            }
+        }
+    }
+}
+
+function restartGame() {
+    if(totalAmmo < 50){
+        totalAmmo = 50;
+    }
+    if(totalAmmo > 90 ){
+        totalAmmo = 90;
+    }
+    wave = 1;
+    gameState = "menu";
+    reloadCooldown = 0;
+    enemySpawnCount = 8;
+    enemyBullets = [];
+    playerCooldown = 0;
+    shootingCooldownTime = 10; 
+    spawnTimer = 0;
+    espeed = 0.0035;
+    spawnE = true;
+    playerStatus = "playing";
+    sX = 0.5;
+    sY = 0.5;
+    playerLives = 5;
+    playerHealth = 100;
+    currentMag = magSize;
+    bullets = [];
+    enemies = [];
+    drops = [];
+}
+
+function playGame() {
+    function drawHUD() {
+        textAlign(RIGHT, TOP);
+        textSize(0.027 * canvasSize);
+        fill(0);
+        stroke(255);
+        strokeWeight(3);
+        text("Ammo: " + currentMag + "/" + totalAmmo, 0.9 * canvasSize, 0.017 * canvasSize);
+        text("Coins: " + coins, 0.83 * canvasSize, 0.05 * canvasSize);
+        noStroke();
+    }
+    if (playerCooldown > 0) {
+        playerCooldown--;
+    }
+    drawDrops();
+    drawSpawners();
+    drawGuy();
+    drawBullets();
+    moveAndShootEnemies();
+    drawEnemyBullets();
+    spawnEnemies();
+    drawPlayerHealth();
+    drawEnemyHealthBars();
+    regenerateHealth();
+    drawScope();
+    drawHouses();
+    drawFlashlight();
+    drawHUD();
+    let px = sX * canvasSize, py = sY * canvasSize;
+    for (let i = drops.length - 1; i >= 0; i--) {
+        let d = drops[i];
+        if (dist(px, py, d.x, d.y) < 0.033 * canvasSize) {
+            if (d.type === "coin") {
+                fill(255, 215, 0);
+                ellipse(d.x, d.y, 0.016 * canvasSize, 0.016 * canvasSize);
+                coins++;
+            } else if (d.type === "ammo") {
+                fill(100, 255, 100);
+                rect(d.x - 0.008 * canvasSize, d.y - 0.008 * canvasSize, 0.016 * canvasSize, 0.016 * canvasSize);
+                totalAmmo += 10; 
+            }
+            drops.splice(i, 1);
+        }
+    }
+}
+
+
+function draw() {
+    cursor('none');
+    if(gameState === "menu"){
+        background(15, 15, 15);
+        fill(230, 7, 7);
+        textAlign(CENTER, CENTER);
+        textSize(0.067 * canvasSize);
+        text("Midnight Mayhem", canvasSize/2, 0.167 * canvasSize);
+        fill(255, 255, 255);
+        textSize(0.033 * canvasSize);
+        text("Choose a Mode", canvasSize/2, 0.3 * canvasSize);
+        fill(50, 200, 100);
+        rect(0.333 * canvasSize, 0.417 * canvasSize, 0.333 * canvasSize, 0.083 * canvasSize, 10);
+        fill(0);
+        text("Play Endless", 0.5 * canvasSize, 0.458 * canvasSize);
+        fill(26, 153, 0);
+        rect(0.333 * canvasSize, 0.533 * canvasSize, 0.333 * canvasSize, 0.083 * canvasSize, 10);
+        fill(0, 0, 0);
+        text("Play Waves", 0.5 * canvasSize, 0.575 * canvasSize);
+        drawScope();
+        return;
+    }
+    if(gameState === "waves"){
+        background(189, 164, 42);
+        playGame(); 
+        fill(0, 0, 0);
+        text("wave" + wave  ,0.515 * canvasSize,0.333 * canvasSize);
+        strokeWeight(2);
+        textSize(0.027 * canvasSize);  
+        fill(255, 0, 0);
+        if(waveChange === true){
+            textAlign(CENTER,CENTER);
+            text(" SPACE for next wave" ,0.5 * canvasSize,0.042 * canvasSize);
+            if(keyIsPressed && keyCode === 32 ){
+                waveInitialized = false;
+                waveChange = false;
+            }
+        }
+        text(playerLives + " lives left",0.133 * canvasSize,0.067 * canvasSize);
+        text(enemySpawnCount + enemies.length +" enemies left",0.183 * canvasSize,0.033 * canvasSize);
+    } 
+    if(gameState === "endless"){
+        background(189, 164, 42);
+        fill(255, 0, 0);
+        playGame();
+        strokeWeight(2);
+    }
+    if(gameState === "dead"){
+        cursor();
+        background(122, 4, 4, 250);
+        if (mouseIsPressed &&
+            mouseX > 0.367 * canvasSize && mouseX < 0.633 * canvasSize &&
+            mouseY > 0.533 * canvasSize && mouseY < 0.6 * canvasSize) {
+            restartGame();
+        }
+        textSize(0.05 * canvasSize);
+        fill(0, 0, 0);
+        textAlign(CENTER,CENTER);
+        text("You have been Consumed!",0.5 * canvasSize,0.417 * canvasSize);
+        let px = sX * canvasSize, py = sY * canvasSize;
+        let angle = atan2(mouseY - py, mouseX - px);
+        noStroke();
+        push();
+        translate(px, py);
+        rotate(angle);
+        fill(117, 82, 22);
+        rect(-0.013 * canvasSize, 0.007 * canvasSize, 0.025 * canvasSize, 0.01 * canvasSize);
+        rect(-0.013 * canvasSize, -0.017 * canvasSize, 0.025 * canvasSize, 0.01 * canvasSize);
+        ellipse(0, 0, 0.042 * canvasSize, 0.033 * canvasSize);
+        pop();
+        drawHouses();
+        drawBullets();
+        moveAndShootEnemies();
+        spawnEnemies();
+        fill(255, 255, 255,200);
+        rect(0.367 * canvasSize, 0.533 * canvasSize, 0.267 * canvasSize, 0.067 * canvasSize, 10);
+        fill(0);
+        textSize(0.033 * canvasSize);
+        text("Restart", 0.5 * canvasSize, 0.567 * canvasSize);
+    }
+    if(gameState === "win"){
+        cursor();
+        moveAndShootEnemies();
+        drawPlayerHealth();
+        fill(0, 0, 0,20);
+        fill(255);
+        rect(0.367 * canvasSize, 0.533 * canvasSize, 0.267 * canvasSize, 0.067 * canvasSize, 10);
+        fill(0);
+        textSize(0.033 * canvasSize);
+        text("Restart", 0.55 * canvasSize, 0.55 * canvasSize);
+        if (mouseIsPressed &&
+            mouseX > 0.367 * canvasSize && mouseX < 0.633 * canvasSize &&
+            mouseY > 0.533 * canvasSize && mouseY < 0.6 * canvasSize) {
+            restartGame();
+        }
+        textSize(0.05 * canvasSize);
+        text("You win!",0.967 * canvasSize,0.833 * canvasSize);
+    }
+}
+    </script>
+  </body>
+</html>
