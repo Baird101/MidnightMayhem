@@ -2,7 +2,7 @@
 <html>
   <head>
     <meta charset="utf-8">
-    <title>Midnight Mayhem</title>
+    <title>Midnight Mayhem.</title>
     <script src="https://cdn.jsdelivr.net/npm/p5@1.9.0/lib/p5.min.js"></script>
     <style>
       body {
@@ -10,7 +10,7 @@
         overflow: hidden;
       }
       canvas {
-        display: block;
+        display:block;
       }
     </style>
   </head>
@@ -41,9 +41,9 @@ let playerLives = 3;
 let enemySpawnCount = 8;
 let spawnE = true;
 let playerStatus = "playing";
+let enemies = [];
+const canvasMargin = 0.1; // 3% margin on each side
 
-
-// Walls as percent of canvasSize
 let houses = [
     { x: 0,    y: 0,    w: 0.42, h: 0.25 },
     { x: 0.67, y: 0,    w: 0.267, h: 0.233 },
@@ -58,16 +58,12 @@ let keys = {
     down: false
 };
 
-// Spawners as percent of canvasSize
 let spawners = [
     {x: 0.008, y: 0.5},
     {x: 0.983, y: 0.5},
     {x: 0.5, y: 0.008},
     {x: 0.5, y: 0.983}
 ];
-
-let enemies = [];
-const canvasMargin = 0.1; // 3% margin on each side
 
 function setup() {
   canvasSize = min(windowWidth, windowHeight) * (1 - 2 * canvasMargin);
@@ -572,7 +568,7 @@ function playGame() {
 function draw() {
     cursor('none');
     if(gameState === "menu"){
-        background(15, 15, 15);
+        background(150, 150, 150);
         fill(230, 7, 7);
         textAlign(CENTER, CENTER);
         textSize(0.067 * canvasSize);
