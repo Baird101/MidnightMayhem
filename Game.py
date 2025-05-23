@@ -1,13 +1,10 @@
 import tkinter as tk
 import math
 import random
-
 root = tk.Tk()
 root.title("Midnight Mayhem")
-
 canvas = tk.Canvas(root, width=1000, height=1000, bg="#550000")
 canvas.pack()
-
 # Obstacles: list of (x1, y1, x2, y2)
 obstacles = [
     (0, 0, 300, 300),
@@ -16,21 +13,14 @@ obstacles = [
     (700, 700, 1000, 1000),
 
 ]
-
 player_radius = 30
 player_x = 500
 player_y = 900
-goal_x = 200
-goal_y = 40
-goal_radius = 24
 
-# Enemy format: [x, y, radius, dx, dy, shoot_timer]
 enemies = []
-
 # Bullets: [x, y, radius, vx, vy, homing, owner]
 # owner: "player" or "enemy"
 bullets = []
-
 game_over = False
 game_won = False
 player_after_id = None
@@ -151,12 +141,7 @@ def draw_flashlight():
 def draw():
     canvas.delete("all")
     # Draw goal
-    canvas.create_oval(
-        goal_x - goal_radius, goal_y - goal_radius,
-        goal_x + goal_radius, goal_y + goal_radius,
-        outline="#cccccc", width=4
-    )
-    # Draw player
+ 
     canvas.create_oval(
         player_x - player_radius, player_y - player_radius,
         player_x + player_radius, player_y + player_radius,
@@ -196,10 +181,10 @@ def draw():
     elif game_won:
         canvas.create_text(500, 500, text="You Escaped!", fill="white", font=("Arial", 32))
 
-def check_goal():
-    dx = player_x - goal_x
-    dy = player_y - goal_y
-    return (dx*dx + dy*dy) <= (player_radius + goal_radius) ** 2
+
+    dx = player_x 
+    dy = player_y 
+    return (dx*dx + dy*dy) <= (player_radius) ** 2
 
 def on_key_press(event):
     if has_homing_bullet():
@@ -277,8 +262,7 @@ def move_player():
         dx += speed
     player_x += dx
     player_y += dy
-    if check_goal():
-        game_won = True
+ 
     draw()
     player_after_id = root.after(20, move_player)
 
@@ -386,3 +370,5 @@ move_player()
 move_enemies()
 move_bullets()
 root.mainloop()
+# The game is a simple top-down shooter where the player must survive waves of enemies while avoiding obstacles.
+# The player can shoot bullets towards the mouse cursor and can also fire homing bullets by holding the right mouse button.}

@@ -15,10 +15,10 @@
     </style>
   </head>
   <body>
+    <button id="resetBtn" style="position:fixed;top:10px;left:10px;z-index:10;">Reset Game</button>
     <script>
-let canvasSize, cnv;
 
-// All positions and sizes are now relative (0..1) and scaled by canvasSize
+let canvasSize, cnv;
 let waveChange = false;
 let waveInitialized = false;
 let wave = 1;
@@ -43,6 +43,17 @@ let spawnE = true;
 let playerStatus = "playing";
 let enemies = [];
 const canvasMargin = 0.1; // 3% margin on each side
+let paused = false;
+
+let homingBullets = 5;
+let maxHomingBullets = 5;
+let homingReload = 0;
+let homingReloadTime = 300; // frames (5 seconds at 60fps)
+let homingActive = null;
+
+let reloading = false;
+let reloadTimer = 0;
+let reloadTime = 120; // 2 seconds at 60fps
 
 let houses = [
     { x: 0,    y: 0,    w: 0.42, h: 0.25 },
@@ -65,12 +76,25 @@ let spawners = [
     {x: 0.5, y: 0.983}
 ];
 
+function hasLineOfSight(x1, y1, x2, y2) {
+    // Returns true if there is a clear line between (x1, y1) and (x2, y2)
+    let steps = int(dist(x1, y1, x2, y2) / (0.01 * canvasSize));
+    for (let i = 1; i < steps; i++) {
+        let ix = lerp(x1, x2, i / steps);
+        let iy = lerp(y1, y2, i / steps);
+        if (isInsideHouse(ix, iy)) return false;
+    }
+    return true;
+}
+
 function setup() {
   canvasSize = min(windowWidth, windowHeight) * (1 - 2 * canvasMargin);
   cnv = createCanvas(canvasSize, canvasSize);
   centerCanvas();
   sX = 0.57;
   sY = 0.51;
+  cnv.mouseOver(() => { paused = false; });
+  cnv.mouseOut(() => { paused = true; });
 }
 
 function windowResized() {
@@ -124,11 +148,9 @@ function checkHouseCollision(b) {
 }
 
 function keyPressed() {
-    if (keyCode === 82 || keyCode === 17) {
-        let needed = magSize - currentMag;
-        let toLoad = min(needed, totalAmmo);
-        currentMag += toLoad;
-        totalAmmo -= toLoad;
+    if ((keyCode === 82 || keyCode === 17) && !reloading && currentMag < magSize && totalAmmo > 0) {
+        reloading = true;
+        reloadTimer = reloadTime;
     }
     if (keyCode === 32 && waveChange === true) {
         if (wave === 2) {
@@ -136,8 +158,6 @@ function keyPressed() {
         } 
         else if (wave === 3) {
             enemySpawnCount += 12;
-        }
-        if (wave > 4) {
             gameState = "win";
         }
         waveInitialized = false;
@@ -167,7 +187,7 @@ function mousePressed() {
         }
         return;
     }
-    if(mouseIsPressed && playerCooldown === 0 && currentMag > 0) {
+    if (mouseButton === LEFT && playerCooldown === 0 && currentMag > 0 && !reloading) {
         let px = sX * canvasSize;
         let py = sY * canvasSize;
         let angle = atan2(mouseY - py, mouseX - px);
@@ -180,6 +200,40 @@ function mousePressed() {
         });
         playerCooldown = 10;
         currentMag--;
+        // Make enemies in a larger area notice the player
+        for (let e of enemies) {
+            let px = sX * canvasSize, py = sY * canvasSize;
+            if (dist(e.x, e.y, px, py) < 0.25 * canvasSize && hasLineOfSight(e.x, e.y, px, py)) {
+                e.noticed = true;
+                e.noticeTimer = 120;
+                e.lastSeenX = px;
+                e.lastSeenY = py;
+            }
+        }
+    }
+    if (mouseButton === RIGHT && homingBullets > 0 && !homingActive && playerStatus === "playing") {
+        let px = sX * canvasSize, py = sY * canvasSize;
+        homingActive = {
+            x: px,
+            y: py,
+            dx: 0,
+            dy: 0,
+            following: true
+        };
+        homingBullets--;
+    }
+}
+
+function mouseReleased() {
+    if (mouseButton === RIGHT && homingActive) {
+        // Shoot fast in current direction
+        let px = sX * canvasSize, py = sY * canvasSize;
+        let angle = atan2(mouseY - homingActive.y, mouseX - homingActive.x);
+        homingActive.dx = cos(angle) * 0.04 * canvasSize;
+        homingActive.dy = sin(angle) * 0.04 * canvasSize;
+        homingActive.following = false;
+        bullets.push({ ...homingActive, type: "homing", damage: 60, aura: 0.07 * canvasSize });
+        homingActive = null;
     }
 }
 
@@ -259,47 +313,95 @@ function moveAndShootEnemies() {
     let px = sX * canvasSize, py = sY * canvasSize;
     for (let i = 0; i < enemies.length; i++) {
         let e = enemies[i];
-        if (e.vx === undefined) {
-            e.vx = 0;
-            e.vy = 0;
+        if (e.vx === undefined) { e.vx = 0; e.vy = 0; }
+        if (e.noticed === undefined) { e.noticed = false; e.noticeTimer = 0; e.wanderAngle = random(TWO_PI); }
+
+        // Awareness logic
+        let playerDist = dist(e.x, e.y, px, py);
+        let canSee = playerDist < 0.18 * canvasSize && hasLineOfSight(e.x, e.y, px, py);
+        if (canSee && !e.noticed) {
+            e.noticed = true;
+            e.noticeTimer = 120; // Only set timer when first noticing
         }
-        let avoidX = 0;
-        let avoidY = 0;
-        for (let h of houses) {
-            let closestX = constrain(e.x, h.x * canvasSize, (h.x + h.w) * canvasSize);
-            let closestY = constrain(e.y, h.y * canvasSize, (h.y + h.h) * canvasSize);
-            let distToHouse = dist(e.x, e.y, closestX, closestY);
-            if (distToHouse < 0.067 * canvasSize) {
-                let strength = (0.067 * canvasSize - distToHouse) / (0.067 * canvasSize);
-                avoidX += (e.x - closestX) / distToHouse * strength * 1;
-                avoidY += (e.y - closestY) / distToHouse * strength * 1;
+        if (!canSee && e.noticed) {
+            e.noticeTimer--;
+            if (e.noticeTimer <= 0) {
+                e.noticed = false;
+                e.noticeTimer = 0;
             }
         }
-        let dx = px - e.x + random(-0.025, 0.025) * canvasSize;
-        let dy = py - e.y + random(-0.025, 0.025) * canvasSize;
-        let mag = sqrt(dx * dx + dy * dy);
-        dx /= mag;
-        dy /= mag;
-        dx += avoidX * 1.2;
-        dy += avoidY * 1.2;
-        mag = sqrt(dx * dx + dy * dy);
-        dx /= mag;
-        dy /= mag;
-        e.vx += (dx * espeed * canvasSize - e.vx) * 0.1;
-        e.vy += (dy * espeed * canvasSize - e.vy) * 0.1;
+        if (canSee && e.noticed) {
+            e.noticeTimer = 120; // Refresh timer only if already noticed and still seeing
+        }
+
+        // If noticed, chase and shoot at player
+        if (e.noticed) {
+            let targetX = px, targetY = py;
+            if (!canSee && e.lastSeenX !== undefined && e.lastSeenY !== undefined) {
+                targetX = e.lastSeenX;
+                targetY = e.lastSeenY;
+            } else if (canSee) {
+                e.lastSeenX = px;
+                e.lastSeenY = py;
+            }
+            let avoidX = 0, avoidY = 0;
+            for (let h of houses) {
+                let closestX = constrain(e.x, h.x * canvasSize, (h.x + h.w) * canvasSize);
+                let closestY = constrain(e.y, h.y * canvasSize, (h.y + h.h) * canvasSize);
+                let distToHouse = dist(e.x, e.y, closestX, closestY);
+                if (distToHouse < 0.067 * canvasSize) {
+                    let strength = (0.067 * canvasSize - distToHouse) / (0.067 * canvasSize);
+                    avoidX += (e.x - closestX) / distToHouse * strength * 1;
+                    avoidY += (e.y - closestY) / distToHouse * strength * 1;
+                }
+            }
+            let dx = targetX - e.x + random(-0.025, 0.025) * canvasSize;
+            let dy = targetY - e.y + random(-0.025, 0.025) * canvasSize;
+            let mag = sqrt(dx * dx + dy * dy);
+            dx /= mag; dy /= mag;
+            dx += avoidX * 1.2; dy += avoidY * 1.2;
+            mag = sqrt(dx * dx + dy * dy);
+            dx /= mag; dy /= mag;
+            e.vx += (dx * espeed * canvasSize - e.vx) * 0.1;
+            e.vy += (dy * espeed * canvasSize - e.vy) * 0.1;
+        } else {
+            // Wander randomly
+            if (frameCount % 60 === 0) {
+                e.wanderAngle += random(-PI/4, PI/4);
+            }
+            let dx = cos(e.wanderAngle);
+            let dy = sin(e.wanderAngle);
+            e.vx += (dx * espeed * canvasSize * 0.5 - e.vx) * 0.1;
+            e.vy += (dy * espeed * canvasSize * 0.5 - e.vy) * 0.1;
+        }
+
+        // Calculate next position
         let nextX = e.x + e.vx;
         let nextY = e.y + e.vy;
+
+        // Prevent wandering out of the screen
+        let margin = 0.025 * canvasSize;
+        nextX = constrain(nextX, margin, canvasSize - margin);
+        nextY = constrain(nextY, margin, canvasSize - margin);
+
+        // Prevent going through walls
         if (!isInsideHouse(nextX, nextY)) {
             e.x = nextX;
             e.y = nextY;
+        } else {
+            // Bounce off wall: reverse direction and pick a new wander angle
+            e.vx *= -0.5;
+            e.vy *= -0.5;
+            e.wanderAngle += PI/2;
         }
+
         if (e.magazine === undefined) {
             e.magazine = 3;
             e.shootingCooldown = 30;
             e.reloadTime = 90;
         }
         e.shootingCooldown--;
-        if (!isLineBlocked(e.x, e.y, px, py) && e.shootingCooldown <= 0) {
+        if (e.noticed && !isLineBlocked(e.x, e.y, px, py) && e.shootingCooldown <= 0) {
             if (e.magazine > 0) {
                 let angle = atan2(py - e.y, px - e.x);
                 let bulletSpeed = (e.type === "strong") ? 0.008 * canvasSize : 0.013 * canvasSize;
@@ -344,7 +446,10 @@ function spawnEnemies() {
                     x: sx,
                     y: sy,
                     health: 100,
-                    shootingCooldown: 0
+                    shootingCooldown: 0,
+                    noticed: false,
+                    noticeTimer: 0,
+                    wanderAngle: random(TWO_PI)
                 });
                 enemySpawnCount--;
             }
@@ -358,7 +463,10 @@ function spawnEnemies() {
                 x: sx,
                 y: sy,
                 health: 100,
-                shootingCooldown: 0
+                shootingCooldown: 0,
+                noticed: false,
+                noticeTimer: 0,
+                wanderAngle: random(TWO_PI)
             });
         }
     }
@@ -460,20 +568,52 @@ function regenerateHealth() {
 }
 
 function drawBullets() {
+    if (homingActive) {
+        // Move slowly toward mouse while held
+        let angle = atan2(mouseY - homingActive.y, mouseX - homingActive.x);
+        homingActive.dx = cos(angle) * 0.01 * canvasSize;
+        homingActive.dy = sin(angle) * 0.01 * canvasSize;
+        homingActive.x += homingActive.dx;
+        homingActive.y += homingActive.dy;
+        fill(100, 255, 255);
+        ellipse(homingActive.x, homingActive.y, 0.03 * canvasSize, 0.03 * canvasSize);
+    }
+
     for (let i = bullets.length - 1; i >= 0; i--) {
         let b = bullets[i];
         b.x += b.dx;
         b.y += b.dy;
-        fill(255, 255, 100);
-        ellipse(b.x, b.y, 0.013 * canvasSize, 0.013 * canvasSize);
+        if (b.type === "homing") {
+            fill(100, 255, 255);
+            ellipse(b.x, b.y, 0.03 * canvasSize, 0.03 * canvasSize);
+        } else {
+            fill(255, 255, 100);
+            ellipse(b.x, b.y, 0.013 * canvasSize, 0.013 * canvasSize);
+        }
         if (b.x < 0 || b.x > canvasSize || b.y < 0 || b.y > canvasSize || checkHouseCollision(b)) {
             bullets.splice(i, 1);
             continue;
         }
         for (let j = enemies.length - 1; j >= 0; j--) {
             let e = enemies[j];
-            if (dist(b.x, b.y, e.x, e.y) < 0.033 * canvasSize) {
-                e.health -= 25;
+            let hitRadius = b.type === "homing" ? (b.aura || 0.07 * canvasSize) : 0.033 * canvasSize;
+            let dmg = b.type === "homing" ? (b.damage || 60) : 25;
+            if (dist(b.x, b.y, e.x, e.y) < hitRadius) {
+                e.health -= dmg;
+                e.noticed = true;
+                e.noticeTimer = 180;
+                if (b.type === "homing") {
+                    // Homing bullet: all enemies in aura notice
+                    for (let k = 0; k < enemies.length; k++) {
+                        let ek = enemies[k];
+                        if (dist(b.x, b.y, ek.x, ek.y) < 0.18 * canvasSize && hasLineOfSight(ek.x, ek.y, b.x, b.y)) {
+                            ek.noticed = true;
+                            ek.noticeTimer = 120;
+                            ek.lastSeenX = b.x;
+                            ek.lastSeenY = b.y;
+                        }
+                    }
+                }
                 if (e.health <= 0) {
                     let rand = random(1);
                     if (rand < 0.6) {
@@ -486,6 +626,13 @@ function drawBullets() {
                 bullets.splice(i, 1);
                 break;
             }
+        }
+    }
+    if (homingBullets < maxHomingBullets) {
+        homingReload++;
+        if (homingReload >= homingReloadTime) {
+            homingBullets++;
+            homingReload = 0;
         }
     }
 }
@@ -518,6 +665,10 @@ function restartGame() {
     drops = [];
 }
 
+document.getElementById("resetBtn").onclick = function() {
+    restartGame();
+};
+
 function playGame() {
     function drawHUD() {
         textAlign(RIGHT, TOP);
@@ -527,6 +678,9 @@ function playGame() {
         strokeWeight(3);
         text("Ammo: " + currentMag + "/" + totalAmmo, 0.9 * canvasSize, 0.017 * canvasSize);
         text("Coins: " + coins, 0.83 * canvasSize, 0.05 * canvasSize);
+        if (reloading) {
+            text("Reloading...", 0.9 * canvasSize, 0.07 * canvasSize);
+        }
         noStroke();
     }
     if (playerCooldown > 0) {
@@ -564,8 +718,15 @@ function playGame() {
     }
 }
 
-
 function draw() {
+    if (paused) {
+        background(50, 50, 50, 200);
+        fill(255);
+        textAlign(CENTER, CENTER);
+        textSize(0.05 * canvasSize);
+        text("Paused\n(Mouse outside game)", canvasSize/2, canvasSize/2);
+        return;
+    }
     cursor('none');
     if(gameState === "menu"){
         background(150, 150, 150);
@@ -589,9 +750,6 @@ function draw() {
     }
     if(gameState === "waves"){
         background(189, 164, 42);
-        playGame(); 
-        fill(0, 0, 0);
-        text("wave" + wave  ,0.515 * canvasSize,0.333 * canvasSize);
         strokeWeight(2);
         textSize(0.027 * canvasSize);  
         fill(255, 0, 0);
